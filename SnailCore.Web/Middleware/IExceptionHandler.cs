@@ -9,6 +9,6 @@ namespace SnailCore.Web.Middleware
     /// </summary>
     public interface IExceptionHandler
     {
-
+          
     }
 }
