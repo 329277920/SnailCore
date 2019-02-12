@@ -1,0 +1,228 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Runtime.Serialization.Formatters.Binary;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace PackProject
+{
+    class Program
+    {
+        static string[] ignoreDirs = new string[] { "bin", "log", ".git", "packages", ".vs", "obj", "imgs", "testimage" };
+        static string fileEnd = "*****fileEnd*****";
+        static string fileStart = "*****fileStart*****";
+
+        static void Main(string[] args)
+        {
+            // args = new string[] { "c",@"F:\Git\Snail.NetCore" };
+            args = new string[] { "x", @"Snail.NetCore_data" };
+            try
+            {
+                if (args.Length <= 0)
+                {
+                    args = new string[] { "h" };
+                }
+                var currDir = Environment.CurrentDirectory;
+
+                switch (args[0])
+                {
+                    case "c":
+                        var dir = "";
+                        if (args.Length >= 2)
+                        {
+                            dir = args[1];
+                            if (!Directory.Exists(dir))
+                            {
+                                dir = $"{currDir}\\{dir}";
+                            }
+                        }
+                        else
+                        {
+                            dir = currDir;
+                        }
+                        if (!Directory.Exists(dir))
+                        {
+                            Console.WriteLine($"error: 未找到目录:{dir}。");
+                            return;
+                        }
+                        compress(new DirectoryInfo(dir), $"{currDir}\\{new DirectoryInfo(dir).Name}_data");
+                        break;
+                    case "x":
+                        if (args.Length < 2)
+                        {
+                            Console.WriteLine($"error: 未指定文件。");
+                            return;
+                        }
+                        var file = args[1];
+                        if (!File.Exists(file))
+                        {
+                            file = $"{currDir}\\{file}";
+                        }
+                        if (!File.Exists(file))
+                        {
+                            Console.WriteLine($"error: 未找到文件:{file}。");
+                            return;
+                        }
+                        decompress(file, currDir);
+                        break;
+                    default:
+                        writeHelpInfo();
+                        return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+            }
+            Console.WriteLine("完成，按任意键退出！");
+            Console.ReadKey();
+        }
+
+        /// <summary>
+        /// 写入帮助信息
+        /// </summary>
+        static void writeHelpInfo()
+        {
+            Console.WriteLine("[command] [-parameters]");
+            Console.WriteLine("c 压缩文件 空格后，指定目录，不指定为当前目录，同时压缩后的文件保存在当前工作目录。");
+            Console.WriteLine("x 解压文件 空格后，指定需要解压的文件，同时解压后的目录保存在当前工作目录。");
+            Console.WriteLine("h 显示帮助");
+        }
+
+        /// <summary>
+        /// 压缩某个目录
+        /// </summary>
+        /// <param name="dir"></param>
+        static void compress(DirectoryInfo dir, string file)
+        {
+            var items = getItems(dir);
+            Console.WriteLine($"文件总数:{items.Count}");
+            using (FileStream fs = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.Read))
+            {
+                using (StreamWriter sw = new StreamWriter(fs, Encoding.UTF8))
+                {
+                    foreach (var item in items)
+                    {
+                        sw.WriteLine(item);
+                    }
+                }
+            }            
+        }
+
+        /// <summary>
+        /// 解压某个文件
+        /// </summary>
+        /// <param name="file"></param>
+        /// <param name="parentDir"></param>
+        static void decompress(string file, string parentDir)
+        {
+            FileStream targetFs = null;            
+            using (FileStream fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                using (StreamReader sr = new StreamReader(fs, Encoding.UTF8))
+                {
+                    while (true)
+                    {
+                        var strLine = sr.ReadLine();
+                        if (string.IsNullOrEmpty(strLine))
+                        {
+                            break;
+                        }
+                        if (strLine == fileStart)
+                        {
+                            var filePath = Path.Combine(parentDir, sr.ReadLine());
+                            var directory = Path.GetDirectoryName(filePath);
+                            if (!Directory.Exists(directory))
+                            {
+                                Directory.CreateDirectory(directory);
+                            }
+                            targetFs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read);
+                        }
+                        else if (strLine == fileEnd)
+                        {
+                            targetFs.Flush();
+                            targetFs.Close();
+                        }
+                        else
+                        {
+                            if (targetFs != null)
+                            {
+                                var buffer = Convert.FromBase64String(strLine);
+                                targetFs.Write(buffer, 0, buffer.Length);
+                            }
+                        }
+                    }                    
+                }
+            }            
+        }
+
+        static List<string> getItems(DirectoryInfo dir, string relativePath = null, List<string> items = null)
+        {
+            items = items ?? new List<string>();
+            relativePath = string.IsNullOrEmpty(relativePath) ? dir.Name : $"{relativePath}/{dir.Name}";
+            foreach (DirectoryInfo childDir in dir.GetDirectories())
+            {
+                if (ignoreDirs.Contains(childDir.Name.ToLower()))
+                {
+                    continue;
+                }
+                getItems(childDir, relativePath, items);
+            }
+            foreach (FileInfo file in dir.GetFiles())
+            {
+                StringBuilder builder = new StringBuilder();
+                builder.Append(fileStart);
+                builder.Append("\r\n");
+                builder.Append($"{relativePath}/{file.Name}\r\n");
+                builder.Append(ReadFile(file));
+                builder.Append("\r\n");
+                builder.Append(fileEnd);
+                items.Add(builder.ToString());
+            }          
+            return items;
+        }
+
+        /// <summary>
+        /// GZip压缩
+        /// </summary>
+        /// <param name="srcStream"></param>
+        /// <returns></returns>
+        public static Stream GZIPCompress(Stream srcStream, Stream targetStream)
+        {
+            srcStream.Position = 0;
+            targetStream.Position = 0;
+            using (GZipStream gzipStream = new GZipStream(targetStream, CompressionMode.Compress, true))
+            {
+                srcStream.CopyTo(gzipStream);
+                return targetStream;
+            }
+        }
+
+        /// <summary>
+        /// ZIP解压
+        /// </summary>
+        /// <param name="zippedData"></param>
+        /// <returns></returns>
+        public static Stream GZIPDecompress(Stream gzipStream, Stream targetStream)
+        {
+            using (GZipStream compressedzipStream = new GZipStream(gzipStream, CompressionMode.Decompress))
+            {
+                compressedzipStream.CopyTo(targetStream);
+            }
+            return targetStream;
+        }
+
+        public static string ReadFile(FileInfo file)
+        {
+            using (var stream = file.OpenRead())
+            {
+                var buffer = new byte[stream.Length];
+                stream.Read(buffer, 0, buffer.Length);
+                return Convert.ToBase64String(buffer);
+            }
+        }
+    }    
+}
